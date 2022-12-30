@@ -1,0 +1,25 @@
+---
+- name: Install OpenVPN server
+  hosts: all
+  become: yes
+
+  tasks:
+
+  - name: Chec and print remotehost name
+    debug: var="ansible_nodename"
+
+  - name: Execute the script
+    script: ./server_conf/openvpn-install.sh
+    args:
+      creates: /root/{{ ansible_nodename }}.ovpn
+  
+  - name: Add string to file
+    lineinfile:
+      path: "/etc/openvpn/server/server.conf"
+      line: 'duplicate-cn'
+
+  - name: Copy config file to ansible host
+    fetch: 
+      src: /root/{{ ansible_nodename }}.ovpn 
+      dest: /mnt/vpnclient_conf/
+      flat: yes

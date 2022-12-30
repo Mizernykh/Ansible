@@ -1,0 +1,132 @@
+---
+- name: Install proxy-server 3proxy
+  hosts: proxyservers
+  become: yes
+
+  tasks:
+    - name: Check and print remotehost name
+      debug: var="ansible_nodename"
+
+    - name: Generate password for proxy user
+      set_fact:
+        proxy_pass: "{{ lookup('password', '/dev/null length=15 chars=ascii_letters') }}"
+
+    - name: Update and upgrade repository cache
+      apt:
+        upgrade: yes
+        update_cache: yes
+
+#    - name: Install package
+#      apt: name=build-essential state=present
+
+    - name: Install a list of packages
+      apt: name={{item}} state=present
+      with_items:
+        - build-essential
+        - ufw
+  
+    - name: Download 3proxy distr
+      get_url:
+        url: https://github.com/z3APA3A/3proxy/archive/0.9.3.tar.gz
+        dest: ~/0.9.3.tar.gz
+
+    - name: Extract archive file
+      unarchive:
+        src: ~/0.9.3.tar.gz
+        dest: ~/
+        remote_src: yes
+
+    - name: Execute the command in remote shell
+      shell:
+        cmd: make -f Makefile.Linux
+        chdir: 3proxy-0.9.3/
+
+    - name: Create directory if it does not exist
+      file:
+        path: /etc/3proxy
+        state: directory
+
+    - name: Create user for service 3proxy
+      user:
+        name: proxy3
+        shell: /sbin/nologin
+        state: present
+        uid: 733
+        system: true
+        createhome: false
+
+    - name: Copy file on the remote host
+      copy:
+        src: ~/3proxy-0.9.3/bin/3proxy
+        dest: /usr/bin/3proxy
+        remote_src: yes # Do copy from the local src to the remote host destination
+        owner: proxy3
+        group: proxy3
+        mode: '0755' 
+
+    - name: Copy file from ansible-host folder to the remote host folder
+      copy:
+        src: ./server_conf/3proxy.cfg
+        dest: /etc/3proxy/3proxy.cfg
+        owner: proxy3
+        group: proxy3
+        mode: '0444'
+
+    - name: Copy file from ansible-host folder to the remote host folder
+      copy:
+        src: ./server_conf/3proxy.service
+        dest: /etc/systemd/system/3proxy.service
+        mode: '0644'
+
+    - name: Generate .PROXYAUTH file
+      template: 
+        src: ./server_conf/.proxyauth.j2
+        dest: /etc/3proxy/.proxyauth
+        owner: proxy3
+        group: proxy3        
+        mode: 0400
+
+    - name: Create directory for logs files
+      file:
+        path: /var/log/3proxy   
+        state: directory
+        owner: proxy3
+        group: proxy3
+        mode: '0755'
+
+    - name: Service 3proxy create,enable and restart
+      systemd:
+        name: 3proxy
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Copy config file to ansible-host
+      fetch:
+        src: /etc/3proxy/.proxyauth
+        dest: /mnt/proxy-servers_conf/{{ ansible_nodename }}-proxyconf.txt
+        flat: yes
+
+    - name: UFW default deny incoming
+      ufw:
+        direction: incoming
+        default: deny
+
+    - name: UFW default allow outgoing
+      ufw:
+        direction: outgoing
+        default: allow
+
+    - name: Open UFW ports
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+        comment: "{{ item.comment }}"
+        state: enabled
+      loop:
+        - { port: 22, proto: tcp, comment: 'SSH' }
+        - { port: 443, proto: tcp, comment: 'HTTPS' }
+        - { port: 31328, proto: tcp, comment: 'Proxy' }
+        - { port: 53, proto: udp, comment: 'DNS' }
+        - { port: 80, proto: tcp, comment: 'HTTP' }
